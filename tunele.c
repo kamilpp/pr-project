@@ -24,11 +24,13 @@
 #define TUNNEL 1
 #define DOCKPLACE 2
 #define REPLAY 5
+#define RELEASE 6
 
 struct queue_el {
     int event_type;
     int clock;
     int source;
+    int value;
 };
 
 struct resource_request {
@@ -59,12 +61,13 @@ int get_system_no(int rank) {
 }
 
 /* helper function */
-void queue_add(int event_type, int clock_, int source) {
+void queue_add(int event_type, int clock_, int source, int value) {
     for (i = 0; i < QUEUE_SIZE; ++i) {
         if (!queue[i].clock) {
             queue[i].clock = clock_;
             queue[i].event_type = event_type;
             queue[i].source = source;
+            queue[i].value = value;
             return;
         }
     }
@@ -77,12 +80,15 @@ void work() {
         MPI_Irecv(&msg, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
         MPI_Test(&request, &flag, &status);
         if (flag) { 
-            if (status.MPI_TAG == REPLAY) {
+            if (status.MPI_TAG == RELEASE) {
+                printf("recieved %d energy release from %d with clock %d\n", msg[1], status.MPI_SOURCE, msg[0]);   
+                total_energy += msg[1];
+            } else if (status.MPI_TAG == REPLAY) {
                 printf("recieved replay message of %d request from %d with clock %d\n", msg[1], status.MPI_SOURCE, msg[0]);   
                 requests[msg[1]].ack_left--;
             } else {
                 printf("recieved %d request from %d with clock %d\n", status.MPI_TAG, status.MPI_SOURCE, msg[0]);   
-                queue_add(status.MPI_TAG, msg[0], status.MPI_SOURCE);
+                queue_add(status.MPI_TAG, msg[0], status.MPI_SOURCE, msg[1]);
             }
             clock_ = max(clock_, msg[0]);
         } else {
@@ -97,6 +103,9 @@ void work() {
             if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
                 msg[0] = clock_;
                 msg[1] = queue[i].event_type;
+                if (msg[1] == ENERGY) {
+                    total_energy -= queue[i].value;
+                }
                 printf("sending...\n");
                 send(REPLAY, queue[i].source);
                 // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
@@ -163,12 +172,26 @@ void run()
 
         // rezerwuj kosmodron
 
-        // wait();
+        wait();
         clock_++;
 
         // rezerwuj energię
-
-        // wait();
+        msg[0] = clock_;
+        msg[1] = energy;
+        requests[ENERGY].clock = clock_;
+        requests[ENERGY].ack_left = planets * 2 - 1;
+        for (i = 0; i < planets; ++i) {
+            send_(ENERGY, destination * planets + i);
+            // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, ENERGY, MPI_COMM_WORLD);
+            if (get_system_no(rank) + i != rank) {
+                send_(ENERGY, get_system_no(rank) * planets + i);
+                // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, ENERGY, MPI_COMM_WORLD);
+            }
+        }
+        wait();
+        while (total_energy < energy) {
+            work();
+        }
         clock_++;
 
         // request tunnel
@@ -189,12 +212,25 @@ void run()
 
         // travel
         idle(TRAVEL_TIME);
+        clock_++;
 
         // release tunnel
         requests[TUNNEL].clock = 0;
+        clock_++;
+
         // release energy
         requests[ENERGY].clock = 0;
+        for (i = 0; i < systems * planets; ++i) {
+            if (i != rank) {
+                msg[0] = clock_;
+                msg[1] = energy;
+                send_(RELEASE, i);
+            }
+        }
+        clock_++;
+        
         // release dock place (send )
+        clock_++;
 
         // fire release!
         work();
