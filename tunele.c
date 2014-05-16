@@ -98,6 +98,7 @@ void work() {
         }
     }
 
+    int i;
     for (i = 0; i < QUEUE_SIZE; i++) {
         if (queue[i].clock) {
             if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
@@ -106,8 +107,8 @@ void work() {
                 if (msg[1] == ENERGY) {
                     total_energy -= queue[i].value;
                 }
-                printf("sending...\n");
-                send(REPLAY, queue[i].source);
+                printf("sending to %d REPLAY to event %d ...\n", queue[i].source, queue[i].event_type);
+                mysend(REPLAY, queue[i].source);
                 // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
                 queue[i].clock = 0;
             }
@@ -134,7 +135,7 @@ void wait() {
     }
 }
 
-void send_(tag, dest) {
+void mysend(tag, dest) {
     printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
     MPI_Send(&msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
 }
@@ -181,10 +182,10 @@ void run()
         requests[ENERGY].clock = clock_;
         requests[ENERGY].ack_left = planets * 2 - 1;
         for (i = 0; i < planets; ++i) {
-            send_(ENERGY, destination * planets + i);
+            mysend(ENERGY, destination * planets + i);
             // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, ENERGY, MPI_COMM_WORLD);
             if (get_system_no(rank) + i != rank) {
-                send_(ENERGY, get_system_no(rank) * planets + i);
+                mysend(ENERGY, get_system_no(rank) * planets + i);
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, ENERGY, MPI_COMM_WORLD);
             }
         }
@@ -200,16 +201,15 @@ void run()
         requests[TUNNEL].clock = clock_;
         requests[TUNNEL].ack_left = planets * 2 - 1;
         for (i = 0; i < planets; ++i) {
-            send_(TUNNEL, destination * planets + i);
+            mysend(TUNNEL, destination * planets + i);
             // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, TUNNEL, MPI_COMM_WORLD);
             if (get_system_no(rank) + i != rank) {
-                send_(TUNNEL, get_system_no(rank) * planets + i);
+                mysend(TUNNEL, get_system_no(rank) * planets + i);
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
             }
         }
         wait();
         clock_++;
-
         // travel
         idle(TRAVEL_TIME);
         clock_++;
@@ -224,7 +224,7 @@ void run()
             if (i != rank) {
                 msg[0] = clock_;
                 msg[1] = energy;
-                send_(RELEASE, i);
+                mysend(RELEASE, i);
             }
         }
         clock_++;
