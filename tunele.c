@@ -29,6 +29,7 @@ struct queue_el {
     int event_type;
     int clock;
     int source;
+    int ads;
 };
 
 struct resource_request {
@@ -73,6 +74,7 @@ void queue_add(int event_type, int clock_, int source) {
 void work() {
     MPI_Request request;
     int flag = 0;
+
     while (1) {
         MPI_Irecv(&msg, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
         MPI_Test(&request, &flag, &status);
@@ -93,16 +95,16 @@ void work() {
     }
 
     for (i = 0; i < QUEUE_SIZE; i++) {
-        if (queue[i].clock) {
-            if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
-                msg[0] = clock_;
-                msg[1] = queue[i].event_type;
-                printf("sending...\n");
-                send(REPLAY, queue[i].source);
-                // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
-                queue[i].clock = 0;
-            }
-        }
+        // if (queue[i].clock) {
+    //         if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
+    //             msg[0] = clock_;
+    //             msg[1] = queue[i].event_type;
+    //             printf("sending...\n");
+    //             send(REPLAY, queue[i].source);
+    //             // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
+    //             queue[i].clock = 0;
+    //         }
+        // }
     }
 }
 
@@ -160,7 +162,6 @@ void run()
 
         printf("%d %d %d %d %d %d\n", total_energy, airfield_space, airfield_occupied, energy, destination, sleep_time);
         debug("new ship to %d, energy = %d\n", destination, energy);
-
         // rezerwuj kosmodron
 
         // wait();
@@ -184,6 +185,7 @@ void run()
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
             }
         }
+        sleep(1);
         wait();
         clock_++;
 
