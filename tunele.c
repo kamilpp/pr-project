@@ -64,8 +64,9 @@ struct resource_request requests[RESOURCES_NO];
         int pts = -1;
 
         while(fgets(buff, sizeof(buff), in)!=NULL) {
-            if (rank == 3) printf("buff: %d %d %s\n", pts + 1, rank, buff);
-            if (pts++ == rank) {
+            pts++;
+            if (rank == 3) printf("buff: %d %d %s\n", pts, rank, buff);
+            if (pts == rank) {
                 if (rank == 3) printf("=========================================\n");
                 path[9] = buff[0];
                 if (buff[1] != ' ' && buff[1] != '\n' && buff[1] != 0) {
