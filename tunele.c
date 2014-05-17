@@ -5,11 +5,7 @@
 #include <unistd.h>
 #include <time.h>
 #define max(a, b) (((a) > (b)) ? (a) : (b))
-#define DEBUG 1
-
 #define swap(x,y) int tmp=x; x=y; y=tmp
-#define debug(...)  if (DEBUG) printf(__VA_ARGS__)
-#define printf(...) printf("%d system, planet %d: ", get_system_no(rank), get_planet_no(rank)); printf(__VA_ARGS__);
 
 #define QUEUE_SIZE 100
 
@@ -49,6 +45,48 @@ int airfield_space, airfield_occupied, total_energy;
 int airfield[RAND_KOSMODRON_SPACE];
 struct queue_el queue[QUEUE_SIZE];
 struct resource_request requests[RESOURCES_NO];
+
+// #define debug(...)  if (DEBUG) printf(__VA_ARGS__)
+#define _4DEBUG
+#ifdef _4DEBUG
+    // #define printf(...) fprintf(fp, __VA_ARGS__)
+    char path[100] = "/dev/pts/";
+    FILE *fp;
+
+    void init() {
+        FILE *in;
+        extern FILE *popen();
+        char buff[512];
+
+        if(!(in = popen("ls -al /dev/pts/ |grep inf106632 |rev |cut -d \" \" -f 1 |rev", "r"))){
+            exit(1);
+        }
+        int pts = -1;
+
+        while(fgets(buff, sizeof(buff), in)!=NULL) {
+            if (rank == 3) printf("buff: %d %d %s\n", pts + 1, rank, buff);
+            if (pts++ == rank) {
+                if (rank == 3) printf("=========================================\n");
+                path[9] = buff[0];
+                if (buff[1] != ' ' && buff[1] != '\n' && buff[1] != 0) {
+                    path[10] = buff[1];
+                } else {
+                    path[10] = '\0';
+                }
+                path[11] = '\0';
+            }
+        }     
+        pclose(in);
+
+        printf("%d: %s\n", rank, path);
+        fp = fopen(path, "w");
+        if (fp == NULL) {
+            printf("%d Blad\n", rank);
+        }
+    }
+#else
+    #define printf(...) printf("%d/%d at %d: ", get_system_no(rank), get_planet_no(rank), clock_); printf(__VA_ARGS__);
+#endif
 
 /* helper function */
 int get_planet_no(int rank) {
@@ -136,12 +174,18 @@ void wait() {
 }
 
 void mysend(tag, dest) {
-    printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
+    if (tag != REPLAY) {
+        printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
+    }
     MPI_Send(&msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
 }
 
 void run()
 {
+    #ifdef _4DEBUG
+        init();
+    #endif
+
     // Initialize
     airfield_space = rand() % RAND_KOSMODRON_SPACE;
     airfield_occupied = 0;
@@ -160,7 +204,7 @@ void run()
         sleep_time = rand() % RAND_SLEEP_TIME + 1;
         do {
             destination = rand() % systems;
-            // work();
+            work();
         }
         while (destination == get_system_no(rank));
         
@@ -169,7 +213,7 @@ void run()
         clock_++;
 
         printf("%d %d %d %d %d %d\n", total_energy, airfield_space, airfield_occupied, energy, destination, sleep_time);
-        debug("new ship to %d, energy = %d\n", destination, energy);
+        printf("new ship to %d, energy = %d\n", destination, energy);
 
         // rezerwuj kosmodron
 
@@ -177,23 +221,24 @@ void run()
         clock_++;
 
         // rezerwuj energię
-        msg[0] = clock_;
-        msg[1] = energy;
-        requests[ENERGY].clock = clock_;
-        requests[ENERGY].ack_left = planets * 2 - 1;
-        for (i = 0; i < planets; ++i) {
-            mysend(ENERGY, destination * planets + i);
-            // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, ENERGY, MPI_COMM_WORLD);
-            if (get_system_no(rank) + i != rank) {
-                mysend(ENERGY, get_system_no(rank) * planets + i);
-                // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, ENERGY, MPI_COMM_WORLD);
-            }
-        }
-        wait();
-        while (total_energy < energy) {
-            work();
-        }
-        clock_++;
+        // msg[0] = clock_;
+        // msg[1] = energy;
+        // requests[ENERGY].clock = clock_;
+        // requests[ENERGY].ack_left = planets * 2 - 1;
+        // for (i = 0; i < planets; ++i) {
+        //     mysend(ENERGY, destination * planets + i);
+        //     // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, ENERGY, MPI_COMM_WORLD);
+        //     if (get_system_no(rank) + i != rank) {
+        //         mysend(ENERGY, get_system_no(rank) * planets + i);
+        //         // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, ENERGY, MPI_COMM_WORLD);
+        //     }
+        // }
+        // printf("\tWAITING FOR ENERGY\n");
+        // wait();
+        // while (total_energy < energy) {
+        //     work();
+        // }
+        // clock_++;
 
         // request tunnel
         msg[0] = clock_;
@@ -203,14 +248,18 @@ void run()
         for (i = 0; i < planets; ++i) {
             mysend(TUNNEL, destination * planets + i);
             // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, TUNNEL, MPI_COMM_WORLD);
-            if (get_system_no(rank) + i != rank) {
+            if (get_system_no(rank) * planets + i != rank) {
                 mysend(TUNNEL, get_system_no(rank) * planets + i);
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
             }
         }
+        
+        printf("\tWAITING FOR TUNNEL\n");
         wait();
         clock_++;
         // travel
+
+        printf("\tTRAVELLING\n");
         idle(TRAVEL_TIME);
         clock_++;
 
@@ -219,21 +268,22 @@ void run()
         clock_++;
 
         // release energy
-        requests[ENERGY].clock = 0;
-        for (i = 0; i < systems * planets; ++i) {
-            if (i != rank) {
-                msg[0] = clock_;
-                msg[1] = energy;
-                mysend(RELEASE, i);
-            }
-        }
-        clock_++;
+        // requests[ENERGY].clock = 0;
+        // for (i = 0; i < systems * planets; ++i) {
+        //     if (i != rank) {
+        //         msg[0] = clock_;
+        //         msg[1] = energy;
+        //         mysend(RELEASE, i);
+        //     }
+        // }
+        // clock_++;
         
         // release dock place (send )
         clock_++;
 
         // fire release!
         work();
+        printf("\tRELEASED\n");
     }
 }
 
