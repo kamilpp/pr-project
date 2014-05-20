@@ -9,7 +9,6 @@
 
 #define swap(x,y) {int tmp=x; x=y; y=tmp}
 #define debug(...)  if (DEBUG) printf(__VA_ARGS__)
-#define printf(...) {printf("%d / %d @ %d: ", get_system_no(rank), get_planet_no(rank), clock_); printf(__VA_ARGS__);}
 
 #define QUEUE_SIZE 100
 
@@ -48,6 +47,11 @@ int airfield_space, airfield_occupied, total_energy;
 int airfield[RAND_KOSMODRON_SPACE];
 struct queue_el queue[QUEUE_SIZE];
 struct resource_request requests[RESOURCES_NO];
+
+void my_send(tag, dest) {
+    printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
+    MPI_Send(msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
+}
 
 /* helper function */
 int get_planet_no(int rank) {
@@ -131,13 +135,54 @@ void my_wait() {
     }
 }
 
-void my_send(tag, dest) {
-    printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
-    MPI_Send(msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
-}
+#define _4DEBUG
+#ifdef _4DEBUG
+    char path[100] = "/dev/pts/";
+    FILE *fp;
+
+    void init() {
+        FILE *in;
+        extern FILE *popen();
+        char buff[512];
+
+        if(!(in = popen("ls -al /dev/pts/ |grep inf106632 |rev |cut -d \" \" -f 1 |rev", "r"))){
+            exit(1);
+        }
+        int pts = -1;
+
+        while(fgets(buff, sizeof(buff), in)!=NULL) {
+            pts++;
+            if (rank == 3) printf("buff: %d %d %s\n", pts, rank, buff);
+            if (pts == rank) {
+                if (rank == 3) printf("=========================================\n");
+                path[9] = buff[0];
+                if (buff[1] != ' ' && buff[1] != '\n' && buff[1] != 0) {
+                    path[10] = buff[1];
+                } else {
+                    path[10] = '\0';
+                }
+                path[11] = '\0';
+            }
+        }     
+        pclose(in);
+
+        printf("%d: %s\n", rank, path);
+        fp = fopen(path, "w");
+        fprintf(fp, "TEEEST\n");
+        if (fp == NULL) {
+            printf("%d Blad\n", rank);
+        }
+    }
+#else
+    #define printf(...) {printf("%d/%d @ %d: ", get_system_no(rank), get_planet_no(rank), clock_); printf(__VA_ARGS__);}
+#endif
 
 void run()
 {
+    #ifdef _4DEBUG
+        init();
+    #endif
+
     // Initialize
     airfield_space = rand() % RAND_KOSMODRON_SPACE;
     airfield_occupied = 0;
