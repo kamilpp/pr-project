@@ -7,9 +7,9 @@
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define DEBUG 1
 
-#define swap(x,y) int tmp=x; x=y; y=tmp
+#define swap(x,y) {int tmp=x; x=y; y=tmp}
 #define debug(...)  if (DEBUG) printf(__VA_ARGS__)
-#define printf(...) printf("%d system, planet %d: ", get_system_no(rank), get_planet_no(rank)); printf(__VA_ARGS__);
+#define printf(...) {printf("%d / %d @ %d: ", get_system_no(rank), get_planet_no(rank), clock_); printf(__VA_ARGS__);}
 
 #define QUEUE_SIZE 100
 
@@ -29,7 +29,7 @@ struct queue_el {
     int event_type;
     int clock;
     int source;
-    int ads;
+    int aa;
 };
 
 struct resource_request {
@@ -76,7 +76,7 @@ void work() {
     int flag = 0;
 
     while (1) {
-        MPI_Irecv(&msg, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
+        MPI_Irecv(msg, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
         MPI_Test(&request, &flag, &status);
         if (flag) { 
             if (status.MPI_TAG == REPLAY) {
@@ -94,21 +94,22 @@ void work() {
         }
     }
 
+    int i;
     for (i = 0; i < QUEUE_SIZE; i++) {
-        // if (queue[i].clock) {
-    //         if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
-    //             msg[0] = clock_;
-    //             msg[1] = queue[i].event_type;
-    //             printf("sending...\n");
-    //             send(REPLAY, queue[i].source);
-    //             // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
-    //             queue[i].clock = 0;
-    //         }
-        // }
+        if (queue[i].clock) {
+            if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
+                msg[0] = clock_;
+                msg[1] = queue[i].event_type;
+                printf("sending...\n");
+                my_send(REPLAY, queue[i].source);
+                // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
+                queue[i].clock = 0;
+            }
+        }
     }
 }
 
-void idle(int seconds) {
+void my_idle(int seconds) {
     time_t start, end;
 
     time(&start);
@@ -119,17 +120,20 @@ void idle(int seconds) {
 
 }
 
-void wait() {
+void my_wait() {
+    int i;
     for (i = 0; i < RESOURCES_NO; ++i) {
+        if (i == TUNNEL) printf("AAA requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
         while (requests[i].ack_left) {
             work();
         }
+        if (i == TUNNEL) printf("BBB requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
     }
 }
 
-void send_(tag, dest) {
+void my_send(tag, dest) {
     printf("send %d request to %d with clock %d\n", tag, dest, msg[0]);
-    MPI_Send(&msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
+    MPI_Send(msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
 }
 
 void run()
@@ -156,20 +160,20 @@ void run()
         }
         while (destination == get_system_no(rank));
         
-        /* wait before starting */
-        // idle(sleep_time);
+        /* my_wait before starting */
+        // my_idle(sleep_time);
         clock_++;
 
         printf("%d %d %d %d %d %d\n", total_energy, airfield_space, airfield_occupied, energy, destination, sleep_time);
         debug("new ship to %d, energy = %d\n", destination, energy);
         // rezerwuj kosmodron
 
-        // wait();
+        // my_wait();
         clock_++;
 
         // rezerwuj energię
 
-        // wait();
+        // my_wait();
         clock_++;
 
         // request tunnel
@@ -177,20 +181,21 @@ void run()
         msg[1] = destination;
         requests[TUNNEL].clock = clock_;
         requests[TUNNEL].ack_left = planets * 2 - 1;
+        printf("requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
         for (i = 0; i < planets; ++i) {
-            send_(TUNNEL, destination * planets + i);
+            my_send(TUNNEL, destination * planets + i);
             // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, TUNNEL, MPI_COMM_WORLD);
             if (get_system_no(rank) + i != rank) {
-                send_(TUNNEL, get_system_no(rank) * planets + i);
+                my_send(TUNNEL, get_system_no(rank) * planets + i);
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
             }
         }
-        sleep(1);
-        wait();
+        my_wait();
+        printf("222222requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
         clock_++;
 
         // travel
-        idle(TRAVEL_TIME);
+        my_idle(TRAVEL_TIME);
 
         // release tunnel
         requests[TUNNEL].clock = 0;
