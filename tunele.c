@@ -201,10 +201,8 @@ void run()
         init();
     #endif
 
-    // Initialize
     airfield_space = rand() % RAND_KOSMODRON_SPACE;
     airfield_occupied = 0;
-    // MPI_Recv(&total_energy, 1, MPI_INT, 0, ENERGY, MPI_COMM_WORLD, &status);
 
     int energy, destination, sleep_time;
     while (1) {
@@ -223,19 +221,18 @@ void run()
         }
         while (destination == get_system_no(rank));
         
-        /* my_wait before starting */
+        /* wait before starting */
         // my_idle(sleep_time);
-        clock_++;
 
         // printf("%d %d %d %d %d %d\n", total_energy, airfield_space, airfield_occupied, energy, destination, sleep_time);
         printf("-- NEW SHIP to %d, energy = %d\n", destination, energy);
+
         // rezerwuj kosmodron
-
-        // my_wait();
+        // debug1("requesting DOCKPLACE...\n");
+        my_wait();
         clock_++;
+        // debug1("requesting DOCKPLACE... DONE\n");
 
-
-        // rezerwuj energię
         debug1("requesting ENERGY...\n");
         msg[1] = energy;
         requests[ENERGY].clock = clock_;
@@ -245,61 +242,50 @@ void run()
         }
 
         my_wait();
+        clock_++;
         while (total_energy < energy) {
             work();
         }
-        debug1("requesting ENERGY... DONE\n");
         // release energy queue
         requests[ENERGY].clock = 0;
         work();
-        
-        clock_++;
+        debug1("requesting ENERGY... DONE\n");
 
-        // my_wait();
-        clock_++;
-
-        // request tunnel
+        debug1("requesting TUNNEL...\n");
         msg[1] = destination;
         requests[TUNNEL].clock = clock_;
         requests[TUNNEL].ack_left = planets * 2 - 1;
         // debug1("requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
-        debug1("requesting TUNNEL...\n");
         for (i = 0; i < planets; ++i) {
             my_send(TUNNEL, destination * planets + i);
             my_send(TUNNEL, get_system_no(rank) * planets + i);
         }
         my_wait();
-        debug1("requesting TUNNEL... DONE\n");
         clock_++;
+        debug1("requesting TUNNEL... DONE\n");
 
-        // travel
-        debug1("-- TRAVELING\n");
+
+        debug1("-- TRAVELING...\n");
         my_idle(TRAVEL_TIME);
         #ifdef _4DEBUG
             my_idle(3);
         #endif
+        debug1("-- TRAVELING... DONE\n");
 
-        // release tunnel
         debug1("releasing TUNNEL...\n")
         requests[TUNNEL].clock = 0;
         work();
         debug1("releasing TUNNEL... DONE\n")
 
-        // release energy
         debug1("releasing ENERGY...\n")
         msg[1] = energy;
         for (i = 0; i < systems * planets; ++i) {
             my_send(RELEASE, i);
         }
         debug1("releasing ENERGY... DONE\n")
-        clock_++;
         
-        // release dock place (send )
-        clock_++;
-        // release dock place (send )
-
-        // fire release!
-        work();
+        // debug1("releasing DOCKPLACE...\n");
+        // debug1("releasing DOCKPLACE... DONE\n");
     }
 }
 
@@ -311,10 +297,10 @@ int main(int argc, char **argv)
     MPI_Get_processor_name(processor, &i);
 
     if (argc < 3) {
-        // MPI_Finalize();
         if (!rank) {
             printf("Usage: ./nazwa [liczba ukladow] [liczba planet]\n");
         }
+        MPI_Finalize();
         exit(-1);
     }
 
@@ -324,13 +310,6 @@ int main(int argc, char **argv)
     total_energy = RAND_ENERGY + (RAND_ENERGY / 2) * (planets * (planets - 1) / 2);
 
     if (systems * planets > rank) {
-        // if (!rank) {
-        //     // initilize energy
-            // total_energy = RAND_ENERGY * planets * systems * RAND_KOSMODRON_SPACE / 4;
-        //     for (i = 0; i < systems * planets; ++i) {
-        //         MPI_Send(&total_energy, 1, MPI_INT, i, ENERGY, MPI_COMM_WORLD);
-        //     }
-        // }
         srand(time(NULL) + rank);
         run();
     }
