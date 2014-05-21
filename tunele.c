@@ -8,7 +8,7 @@
 #define swap(x,y) {int tmp=x; x=y; y=tmp}
 
 #define _4DEBUG
-#define DEBUG_LEVEL 2
+#define DEBUG_LEVEL 1
 
 #define QUEUE_SIZE 100
 #define TRAVEL_TIME 2
@@ -148,7 +148,14 @@ void work() {
     int i;
     for (i = 0; i < QUEUE_SIZE; i++) {
         if (queue[i].clock) {
-            if (requests[queue[i].event_type].clock == 0 || requests[queue[i].event_type].clock > queue[i].clock) {
+            // if (!rank) {
+            //     printf("queue[%d] %d %d %d \n", i, queue[i].event_type, requests[queue[i].event_type].clock, queue[i].clock);
+            // }
+            if (
+                requests[queue[i].event_type].clock == 0 || 
+                requests[queue[i].event_type].clock > queue[i].clock ||
+                (requests[queue[i].event_type].clock == queue[i].clock && queue[i].source < rank)
+            ) {
                 msg[0] = clock_;
                 msg[1] = queue[i].event_type;
                 my_send(REPLAY, queue[i].source);
@@ -192,11 +199,11 @@ void run()
 
     int energy, destination, sleep_time;
     while (1) {
-        if (rank) {
-            while(1) {
-                work();
-            }
-        }
+        // if (rank) {
+        //     while(1) {
+        //         work();
+        //     }
+        // }
 
         /* rand outgoing ship */
         energy = rand() % RAND_ENERGY + RAND_ENERGY / 5;
@@ -233,7 +240,7 @@ void run()
         for (i = 0; i < planets; ++i) {
             my_send(TUNNEL, destination * planets + i);
             // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, TUNNEL, MPI_COMM_WORLD);
-            if (get_system_no(rank) + i != rank) {
+            if (get_system_no(rank) * planets + i != rank) {
                 my_send(TUNNEL, get_system_no(rank) * planets + i);
                 // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
             }
@@ -244,6 +251,9 @@ void run()
 
         // travel
         my_idle(TRAVEL_TIME);
+        #ifdef _4DEBUG
+            my_idle(1);
+        #endif
 
         // release tunnel
         debug1("releasing TUNNEL... DONE\n")
