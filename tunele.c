@@ -22,12 +22,13 @@
 #define TUNNEL 1
 #define DOCKPLACE 2
 #define REPLAY 5
+#define RELEASE 6
 
 struct queue_el {
     int event_type;
     int clock;
     int source;
-    int aa;
+    int value;
 };
 
 struct resource_request {
@@ -92,7 +93,7 @@ int get_system_no(int rank) {
 
         // printf("%d: %s\n", rank, path);
         fp = fopen(path, "w");
-        fprintf(fp, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n ==== PROCESS nr %d ====\n\n", rank);
+        fprintf(fp, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n ==== PROCESS nr %d (energy %d) ====\n\n", rank, total_energy);
         if (fp == NULL) {
             printf("%d nie udało się podłączyć do zdalnej konsoli\n", rank);
             MPI_Finalize();
@@ -106,17 +107,21 @@ int get_system_no(int rank) {
 #endif
 
 void my_send(tag, dest) {
-    debug2("%s %d to %d\n", (tag != REPLAY) ? "REQUEST" : "REPLAY", tag, dest);
-    MPI_Send(msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
+    msg[0] = clock_;
+    if (dest != rank) {
+        debug2("%s %d to %d\n", (tag != REPLAY) ? "REQUEST" : "REPLAY", tag, dest);
+        MPI_Send(msg, 2, MPI_INT, dest, tag, MPI_COMM_WORLD);
+    }
 }
 
 /* helper function */
-void queue_add(int event_type, int clock_, int source) {
+void queue_add(int event_type, int clock_, int source, int value) {
     for (i = 0; i < QUEUE_SIZE; ++i) {
         if (!queue[i].clock) {
             queue[i].clock = clock_;
             queue[i].event_type = event_type;
             queue[i].source = source;
+            queue[i].value = value;
             return;
         }
     }
@@ -130,12 +135,15 @@ void work() {
         MPI_Irecv(msg, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
         MPI_Test(&request, &flag, &status);
         if (flag) { 
-            if (status.MPI_TAG == REPLAY) {
+             if (status.MPI_TAG == RELEASE) {
+                debug2("RELEASE %d from %d @%d\n", msg[1], status.MPI_SOURCE, msg[0]);
+                total_energy += msg[1];
+            } else if (status.MPI_TAG == REPLAY) {
                 debug2("REPLAY %d from %d @%d\n", msg[1], status.MPI_SOURCE, msg[0]);   
                 requests[msg[1]].ack_left--;
             } else {
                 debug2("REQUEST %d from %d @%d\n", status.MPI_TAG, status.MPI_SOURCE, msg[0]);   
-                queue_add(status.MPI_TAG, msg[0], status.MPI_SOURCE);
+                queue_add(status.MPI_TAG, msg[0], status.MPI_SOURCE, msg[1]);
             }
             clock_ = max(clock_, msg[0]);
         } else {
@@ -156,10 +164,11 @@ void work() {
                 requests[queue[i].event_type].clock > queue[i].clock ||
                 (requests[queue[i].event_type].clock == queue[i].clock && queue[i].source < rank)
             ) {
-                msg[0] = clock_;
                 msg[1] = queue[i].event_type;
                 my_send(REPLAY, queue[i].source);
-                // MPI_Send(&msg, 2, MPI_INT, queue[i].source, REPLAY, MPI_COMM_WORLD);
+                if (queue[i].event_type == ENERGY) {
+                    total_energy -= queue[i].value;
+                }
                 queue[i].clock = 0;
             }
         }
@@ -225,13 +234,31 @@ void run()
         // my_wait();
         clock_++;
 
+
         // rezerwuj energię
+        debug1("requesting ENERGY...\n");
+        msg[1] = energy;
+        requests[ENERGY].clock = clock_;
+        requests[ENERGY].ack_left = planets * 2 - 1;
+        for (i = 0; i < systems * planets; ++i) {
+            my_send(ENERGY, i);
+        }
+
+        my_wait();
+        while (total_energy < energy) {
+            work();
+        }
+        debug1("requesting ENERGY... DONE\n");
+        // release energy queue
+        requests[ENERGY].clock = 0;
+        work();
+        
+        clock_++;
 
         // my_wait();
         clock_++;
 
         // request tunnel
-        msg[0] = clock_;
         msg[1] = destination;
         requests[TUNNEL].clock = clock_;
         requests[TUNNEL].ack_left = planets * 2 - 1;
@@ -239,27 +266,36 @@ void run()
         debug1("requesting TUNNEL...\n");
         for (i = 0; i < planets; ++i) {
             my_send(TUNNEL, destination * planets + i);
-            // MPI_Send(&msg, 2, MPI_INT, get_system_no(destination) + i, TUNNEL, MPI_COMM_WORLD);
-            if (get_system_no(rank) * planets + i != rank) {
-                my_send(TUNNEL, get_system_no(rank) * planets + i);
-                // MPI_Send(&msg, 2, MPI_INT, get_system_no(rank) + i, TUNNEL, MPI_COMM_WORLD);
-            }
+            my_send(TUNNEL, get_system_no(rank) * planets + i);
         }
         my_wait();
         debug1("requesting TUNNEL... DONE\n");
         clock_++;
 
         // travel
+        debug1("-- TRAVELING\n");
         my_idle(TRAVEL_TIME);
         #ifdef _4DEBUG
-            my_idle(1);
+            my_idle(3);
         #endif
 
         // release tunnel
-        debug1("releasing TUNNEL... DONE\n")
+        debug1("releasing TUNNEL...\n")
         requests[TUNNEL].clock = 0;
+        work();
+        debug1("releasing TUNNEL... DONE\n")
+
         // release energy
-        requests[ENERGY].clock = 0;
+        debug1("releasing ENERGY...\n")
+        msg[1] = energy;
+        for (i = 0; i < systems * planets; ++i) {
+            my_send(RELEASE, i);
+        }
+        debug1("releasing ENERGY... DONE\n")
+        clock_++;
+        
+        // release dock place (send )
+        clock_++;
         // release dock place (send )
 
         // fire release!
@@ -284,7 +320,8 @@ int main(int argc, char **argv)
 
     systems = atoi(argv[1]);
     planets = atoi(argv[2]);
-    total_energy = RAND_ENERGY * planets * systems * RAND_KOSMODRON_SPACE / 4;
+    // total_energy = RAND_ENERGY * planets * systems * RAND_KOSMODRON_SPACE / 4;
+    total_energy = RAND_ENERGY + (RAND_ENERGY / 2) * (planets * (planets - 1) / 2);
 
     if (systems * planets > rank) {
         // if (!rank) {
@@ -294,7 +331,7 @@ int main(int argc, char **argv)
         //         MPI_Send(&total_energy, 1, MPI_INT, i, ENERGY, MPI_COMM_WORLD);
         //     }
         // }
-
+        srand(time(NULL) + rank);
         run();
     }
 
