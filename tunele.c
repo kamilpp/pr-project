@@ -216,10 +216,10 @@ void run()
         energy = rand() % RAND_ENERGY + RAND_ENERGY / 5;
         sleep_time = rand() % RAND_SLEEP_TIME + 1;
         do {
-            destination = rand() % systems;
+            destination = rand() % (systems * planets);
             // work();
         }
-        while (destination == get_system_no(rank));
+        while (get_system_no(destination) == get_system_no(rank));
         
         /* wait before starting */
         // my_idle(sleep_time);
@@ -229,8 +229,8 @@ void run()
 
         // rezerwuj kosmodron
         // debug1("requesting DOCKPLACE...\n");
-        my_wait();
-        clock_++;
+        // my_wait();
+        // clock_++;
         // debug1("requesting DOCKPLACE... DONE\n");
 
         debug1("requesting ENERGY...\n");
@@ -257,10 +257,10 @@ void run()
         requests[TUNNEL].ack_left = planets * 2 - 1;
         // debug1("requests[%d] left %d\n", TUNNEL, requests[TUNNEL].ack_left);
         for (i = 0; i < planets; ++i) {
-            my_send(TUNNEL, destination * planets + i);
+            my_send(TUNNEL, get_system_no(destination) * planets + i);
             my_send(TUNNEL, get_system_no(rank) * planets + i);
         }
-        my_wait();
+        my_wait(); 
         clock_++;
         debug1("requesting TUNNEL... DONE\n");
 
@@ -296,7 +296,7 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Get_processor_name(processor, &i);
 
-    if (argc < 3) {
+    if (argc < 2) {
         if (!rank) {
             printf("Usage: ./nazwa [liczba ukladow] [liczba planet]\n");
         }
@@ -305,7 +305,7 @@ int main(int argc, char **argv)
     }
 
     systems = atoi(argv[1]);
-    planets = atoi(argv[2]);
+    planets = atoi(argv[1]);
     // total_energy = RAND_ENERGY * planets * systems * RAND_KOSMODRON_SPACE / 4;
     total_energy = RAND_ENERGY + (RAND_ENERGY / 2) * (planets * (planets - 1) / 2);
 
