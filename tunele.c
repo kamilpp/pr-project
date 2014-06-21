@@ -11,18 +11,22 @@
 #define _4DEBUG
 // #define _REALDEBUG
 #define DEBUG_LEVEL 1
+// #define DEBUG_TEST
 
 #define QUEUE_SIZE 100
-#define TRAVEL_TIME 2
+#define TRAVEL_TIME 30
+#define KOSMODRON_WAIT 40
 
 #define RAND_KOSMODRON_SPACE 10
 #define RAND_ENERGY 1000
 #define RAND_SLEEP_TIME 3
 
-#define RESOURCES_NO 3
+#define RESOURCES_NO 4
 #define ENERGY 0
 #define TUNNEL 1
-#define DOCKPLACE 2
+#define DOCKPLACE_QUEUE 2
+
+#define DOCKPLACE 3
 
 #define REQUEST 5
 #define REPLAY 6
@@ -48,6 +52,8 @@ int msg[3];
 
 int clock_ = 1;
 int planets, systems;
+int dockplace_spaces;
+time_t dockplace_timestamps[10];
 int airfield_space, airfield_occupied, total_energy;
 int airfield[RAND_KOSMODRON_SPACE];
 struct queue_el queue[QUEUE_SIZE];
@@ -114,7 +120,7 @@ int get_system_base(int rank) {
 
         // printf("%d: %s\n", rank, path);
         fp = fopen(path, "w");
-        fprintf(fp, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n ==== PROCESS nr %d (energy %d) ====\n\n", rank, total_energy);
+        fprintf(fp, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n ==== PROCESS nr %d (energy %d) ====\n\n", rank, total_energy);
         if (fp == NULL) {
             printf("%d nie udało się podłączyć do zdalnej konsoli\n", rank);
             MPI_Finalize();
@@ -135,7 +141,7 @@ void my_send(tag, resource_type, dest) {
     msg[0] = clock_;
     msg[1] = resource_type;
     if (dest != rank) {
-        debug2("%s %d to %d\n", (tag != REPLAY) ? "REQUEST" : "REPLAY", resource_type, dest);
+        debug2("%s %d to %d\n", (tag == REPLAY) ? "REPLAY" : ((tag == REQUEST) ? "REQUEST" : "RELEASE"), resource_type, dest);
         debugR("%d %d %d %d %d %d\n", rank, dest, clock_, tag, resource_type, msg[2]);
         MPI_Send(msg, 3, MPI_INT, dest, tag, MPI_COMM_WORLD);
     }
@@ -163,8 +169,21 @@ void work() {
         MPI_Test(&request, &flag, &status);
         if (flag) { 
              if (status.MPI_TAG == RELEASE) {
-                debug2("ENERGY RELEASE from %d @%d\n", status.MPI_SOURCE, msg[0]);
-                total_energy += msg[2];
+                if (msg[2] != -1) {
+                    total_energy += msg[2];
+                    debug2("ENERGY RELEASE from %d @%d\n", status.MPI_SOURCE, msg[0]);
+                } else {
+                    debug2("DOCKPLACE RELEASE from %d @%d\n", status.MPI_SOURCE, msg[0]);
+                    int xx;
+                    for (xx = 0; xx < 10; xx++) {
+                        if (!dockplace_timestamps[xx]) {
+                            time_t start;
+                            time(&start);
+                            dockplace_timestamps[xx] = start;
+                            break;
+                        }
+                    }
+                }
             } else if (status.MPI_TAG == REPLAY) {
                 debug2("REPLAY %d from %d @%d\n", msg[1], status.MPI_SOURCE, msg[0]);   
                 requests[msg[1]].ack_left--;
@@ -180,26 +199,42 @@ void work() {
         }
     }
 
+    int xx;
+    time_t end;
+    time(&end);
+    for (xx = 0; xx < 10; xx++) {
+        if (dockplace_timestamps[xx] && (difftime(end, dockplace_timestamps[xx]) > KOSMODRON_WAIT)) {
+            dockplace_timestamps[xx] = 0;
+            dockplace_spaces++;
+        }
+    }
+
+
     int i;
     for (i = 0; i < QUEUE_SIZE; i++) {
         if (queue[i].clock) {
             // if (!rank) {
-            //     printf("queue[%d] %d %d %d \n", i, queue[i].resource_type, requests[queue[i].resource_type].clock, queue[i].clock);
+            //     printf("queue[%d] restype %d clocks %d %d vals %d %d  %d\n", i, queue[i].resource_type, requests[queue[i].resource_type].clock, queue[i].clock, queue[i].value, requests[queue[i].resource_type].clock, dockplace_spaces);
             // }
-            if (
+            msg[2] = queue[i].value;
+            if ((queue[i].resource_type != DOCKPLACE) && (
                 requests[queue[i].resource_type].clock == 0 || 
                 requests[queue[i].resource_type].clock > queue[i].clock ||
                 (requests[queue[i].resource_type].clock == queue[i].clock && queue[i].source < rank) ||
                 (queue[i].resource_type == TUNNEL && requests[TUNNEL].value != queue[i].value) ||
-                (queue[i].resource_type == DOCKPLACE && requests[DOCKPLACE].value != queue[i].value)
-            ) {
-                msg[2] = queue[i].value;
+                (queue[i].resource_type == DOCKPLACE_QUEUE && requests[DOCKPLACE_QUEUE].value != queue[i].value)
+            )) {
                 my_send(REPLAY, queue[i].resource_type, queue[i].source);
                 if (queue[i].resource_type == ENERGY) {
                     total_energy -= queue[i].value;
                 }
                 queue[i].clock = 0;
+            } else if ((queue[i].resource_type == DOCKPLACE) && (dockplace_spaces > 0)) {
+                my_send(REPLAY, queue[i].resource_type, queue[i].source);
+                dockplace_spaces--;
+                queue[i].clock = 0;
             }
+
         }
     }
 }
@@ -255,18 +290,35 @@ void run()
 
         // printf("%d %d %d %d %d %d\n", total_energy, airfield_space, airfield_occupied, energy, destination, sleep_time);
         debug1("-- NEW SHIP to %d, energy = %d\n", destination, energy);
+        #ifdef DEBUG_TEST
+            printf("new ship to %d energy %d tunnel %d\n", destination, energy, get_tunel_no(rank, destination));
+        #endif
+        debug1("requesting %d DOCKPLACE_QUEUE...\n", destination);
+        clock_++;
+        msg[2] = destination;
+        requests[DOCKPLACE_QUEUE].clock = clock_;
+        requests[DOCKPLACE_QUEUE].ack_left = planets * systems - 1;
+        requests[DOCKPLACE_QUEUE].value = destination;
+        for (i = 0; i < systems * planets; ++i) {
+            my_send(REQUEST, DOCKPLACE_QUEUE, i);
+        }
+        my_wait();
+        debug1("requesting %d DOCKPLACE_QUEUE... DONE\n", destination);
 
         debug1("requesting %d DOCKPLACE...\n", destination);
         clock_++;
         msg[2] = destination;
         requests[DOCKPLACE].clock = clock_;
-        requests[DOCKPLACE].ack_left = planets * systems - 1;
+        requests[DOCKPLACE].ack_left = 1;
         requests[DOCKPLACE].value = destination;
-        for (i = 0; i < systems * planets; ++i) {
-            my_send(REQUEST, DOCKPLACE, i);
-        }
+        my_send(REQUEST, DOCKPLACE, destination);
         my_wait();
         debug1("requesting %d DOCKPLACE... DONE\n", destination);
+
+        debug1("releasing DOCKPLACE_QUEUE...\n");
+        requests[DOCKPLACE_QUEUE].clock = 0;
+        work();
+        debug1("releasing DOCKPLACE_QUEUE... DONE\n");
 
         debug1("requesting %d ENERGY...\n", energy);
         clock_++;
@@ -300,11 +352,12 @@ void run()
         my_wait(); 
         debug1("requesting %d TUNNEL... DONE\n", get_tunel_no(rank, destination));
 
+        #ifdef DEBUG_TEST
+            printf("traveling...\n");
+        #endif
+
         debug1("-- TRAVELING...\n");
         my_idle(TRAVEL_TIME);
-        #ifdef _4DEBUG
-            my_idle(3);
-        #endif
         debug1("-- TRAVELING... DONE\n");
 
         debug1("releasing TUNNEL...\n")
@@ -320,8 +373,8 @@ void run()
         debug1("releasing ENERGY... DONE\n")
         
         debug1("releasing DOCKPLACE...\n");
-        requests[DOCKPLACE].clock = 0;
-        work();
+        msg[2] = -1;
+        my_send(RELEASE, DOCKPLACE, destination);
         debug1("releasing DOCKPLACE... DONE\n");
     }
 }
@@ -345,6 +398,7 @@ int main(int argc, char **argv)
     planets = atoi(argv[1]);
     // total_energy = RAND_ENERGY * planets * systems * RAND_KOSMODRON_SPACE / 4;
     total_energy = RAND_ENERGY + (RAND_ENERGY / 2) * (planets * (planets - 1) / 2);
+    dockplace_spaces = 1;
 
     if (systems * planets > rank) {
         srand(time(NULL) + rank);
